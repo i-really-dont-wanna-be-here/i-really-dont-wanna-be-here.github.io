@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>i-realy-dont-wanna-be-here</title>
+  <style>
+    :root {
+      --bg:#0a0d0b; --fg:#e6ffe6; --dim:#9bd49b; --accent:#6eff6e; --warn:#ff7b7b;
+    }
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--fg);
+      font:16px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      display:flex; align-items:stretch; justify-content:center;
+    }
+    .term{
+      width:clamp(320px, 90vw, 900px); height:100vh; box-sizing:border-box;
+      padding:18px 16px 90px; position:relative; overflow:auto;
+    }
+    .banner{color:var(--dim)}
+    .line{white-space:pre-wrap; word-break:break-word}
+    .prompt{color:var(--accent)}
+    .error{color:var(--warn)}
+    .help kbd{background:#112; border:1px solid #223; padding:2px 6px; border-radius:6px}
+    .statusbar{
+      position:fixed; left:50%; transform:translateX(-50%);
+      bottom:0; width:clamp(320px, 90vw, 900px); box-sizing:border-box;
+      background:#0b0f0d; border-top:1px solid #1b261d; padding:12px 14px;
+    }
+    .input-row{display:flex; gap:8px; align-items:center; position:relative}
+
+    /* caret is now absolutely positioned inside .input-row */
+    .caret{
+      position:absolute;
+      width:8px;
+      height:1.2em;
+      background:var(--accent);
+      animation:blink 1s steps(2, jump-none) infinite;
+      pointer-events:none;
+    }
+    /* hidden mirror used to measure text width */
+    #mirror{
+      position:absolute;
+      top:-9999px;
+      left:0;
+      white-space:pre;
+      font:inherit;
+      visibility:hidden;
+    }
+
+    @keyframes blink{50%{opacity:0}}
+    input[type="text"]{
+      flex:1; background:transparent; color:var(--fg); border:none; outline:none;
+      font:inherit;
+      caret-color:transparent; /* hide the real caret */
+    }
+    /* hidden element used for measuring text width */
+    #mirror {
+      position:absolute;
+      top:-9999px;
+      left:0;
+      white-space:pre;
+      visibility:hidden;
+      font:inherit;
+    }
+    a{color:var(--accent)}
+  </style>
+</head>
+<body>
+  <main class="term" id="term" aria-live="polite" aria-label="Interactive terminal">
+    <div class="banner line">/**
+  Wanna hear a joke
+ **/</div>
+  </main>
+
+  <footer class="statusbar" role="group" aria-label="terminal input">
+    <div class="input-row">
+      <span class="prompt" aria-hidden="true">guest:~$</span>
+      <input id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="Command input"/>
+      <span class="caret" aria-hidden="true"></span>
+      <span id="mirror" aria-hidden="true"></span> 
+    </div>
+  </footer>
+
+  <script>
+  (function(){
+    const term = document.getElementById('term');
+    const input = document.getElementById('cmd');
+    const caret = document.querySelector('.caret');             
+    const mirror = document.getElementById('mirror');           
+
+    /** ---------------------- Data ---------------------- */
+    const jokes = {
+      1: "Why do programmers prefer dark mode? Because light attracts bugs.",
+      2: "I told my computer I needed a break, and it said: ‘No problem, I’ll go to sleep.’",
+      3: "There are 10 kinds of people: those who understand binary and those who don’t.",
+      4: "A SQL query walks into a bar, walks up to two tables and asks: ‘Can I join you?’",
+      5: "How many programmers does it take to change a light bulb? None, that’s a hardware problem.",
+      6: "I would tell you a UDP joke, but you might not get it.",
+      7: "To understand recursion, you must first understand recursion.",
+      8: "Knock, knock. Who’s there? Java. Java who? Java nice day!",
+      9: "Debugging: like being the detective in a crime movie where you’re also the murderer.",
+      10:"Git commit -m ‘Fixed a bug.’  — creates 3 new bugs.",
+    };
+
+    /** --------------- Terminal State ------------------ */
+    const state = {
+      history: [],
+      hindex: -1,
+      awaiting: null, // e.g. {type:'joke-number'}
+      commands: {},
+    };
+
+    /** ----------------- Utilities --------------------- */
+    function println(html=""){
+      const div = document.createElement('div');
+      div.className = 'line';
+      div.innerHTML = html;
+      term.appendChild(div);
+      term.scrollTop = term.scrollHeight;
+    }
+    function promptEcho(raw){
+      println(`<span class="prompt">guest:~$</span> ${escapeHtml(raw)}`);
+    }
+    function escapeHtml(s){
+      return s.replace(/[&<>\"]/g, c=>({"&":"&amp;","<":"&lt;","&gt;":">","\"":"&quot;"}[c]));
+    }
+    function unknown(cmd){ println(`<span class="error">Command not found:</span> ${escapeHtml(cmd)}`) }
+    function listJokes(){
+      const nums = Object.keys(jokes).map(Number).sort((a,b)=>a-b);
+      println(`Available joke numbers: ${nums.join(', ')}`);
+    }
+    function showJoke(n){
+      const key = Number(n);
+      if(!Number.isInteger(key) || !(key in jokes)){
+        println(`<span class="error">Pick a number from 1 to ${Object.keys(jokes).length}.</span>`);
+        return false;
+      }
+      println(`[#${key}] ${escapeHtml(jokes[key])}`);
+      return true;
+    }
+    function randomJoke(){
+      const keys = Object.keys(jokes);
+      const r = Number(keys[Math.floor(Math.random()*keys.length)]);
+      showJoke(r);
+    }
+
+    /** ----------------- Command Table ----------------- */
+    const commands = state.commands = {
+      help(){
+        println(`Available commands:\n- <b>help</b> — show this help\n- <b>about</b> — about\n- <b>joke</b> [n] — tell a joke; if no number, you will be prompted\n- <b>random</b> — random joke\n- <b>clear</b> — clear screen`);
+      },
+      about(){
+        println(`Type <b>joke</b> and pick a number!`);
+      },
+      clear(){ term.innerHTML = document.querySelector('.banner').outerHTML; },
+      random(){ randomJoke(); },
+      joke(arg){
+        if(arg){
+          showJoke(arg);
+          return;
+        }
+        println(`Choose a number (1–${Object.keys(jokes).length}) and press Enter:`);
+        state.awaiting = { type: 'joke-number' };
+      },
+    };
+
+    /** --------------- Caret positioning ------------------ */
+    function updateCaret(){                                   
+      // text before the caret
+      const before = input.value.substring(0, input.selectionStart);
+
+      // mirror text to measure exact width in the same font
+      mirror.textContent = before || "";
+
+      // compute horizontal offset inside the .input-row
+      const textWidth = mirror.offsetWidth;
+      const padLeft = parseFloat(getComputedStyle(input).paddingLeft) || 0;
+
+      // place caret relative to the input element within .input-row
+      caret.style.left = (input.offsetLeft + padLeft + textWidth - input.scrollLeft) + "px";
+      caret.style.top  = input.offsetTop + "px";
+      caret.style.height = input.offsetHeight + "px";
+    }
+
+    /** --------------- Input Handling ------------------ */
+    function run(raw){
+      const line = raw.trim();
+      if(!line){ return; }
+      state.history.unshift(line); state.hindex = -1;
+      promptEcho(line);
+
+      // If we're awaiting a number, intercept
+      if(state.awaiting?.type === 'joke-number'){
+        const ok = showJoke(line);
+        state.awaiting = null;
+        return;
+      }
+
+      // Parse command + arg
+      const [cmd, ...rest] = line.split(/\s+/);
+      const arg = rest.join(' ').trim();
+      if(commands[cmd]){
+        commands[cmd](arg);
+      } else if (tryAutocomplete(cmd)){
+        // Already executed by autocomplete
+      } else {
+        unknown(cmd);
+      }
+    }
+
+    // Simple autocomplete on Tab
+    function complete(prefix){
+      const keys = Object.keys(commands);
+      const hits = keys.filter(k=>k.startsWith(prefix));
+      if(hits.length===1){ return hits[0]; }
+      if(hits.length>1){ println('suggestions: ' + hits.join(' ')); }
+      return null;
+    }
+    function tryAutocomplete(cmd){
+      const c = complete(cmd);
+      if(c && commands[c]){ commands[c](); return true; }
+      return false;
+    }
+
+    // Key handling
+    input.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        const val = input.value; input.value = '';
+        run(val);
+        updateCaret(); 
+        return;
+      }
+      if(e.key === 'Tab'){
+        e.preventDefault();
+        const c = complete(input.value.trim());
+        if(c){ input.value = c + ' '; }
+        updateCaret(); 
+        return;
+      }
+      if(e.key === 'ArrowUp'){
+        e.preventDefault();
+        if(state.history.length){
+          state.hindex = Math.min(state.hindex+1, state.history.length-1);
+          input.value = state.history[state.hindex];
+        }
+        updateCaret(); 
+        return;
+      }
+      if(e.key === 'ArrowDown'){
+        e.preventDefault();
+        if(state.hindex > 0){ state.hindex--; input.value = state.history[state.hindex]; }
+        else { state.hindex = -1; input.value = ''; }
+        updateCaret(); 
+        return;
+      }
+    });
+
+    // Keep caret synced
+    input.addEventListener('input', updateCaret);  
+    input.addEventListener('click', updateCaret);  
+    input.addEventListener('keyup', updateCaret);  
+    input.addEventListener('scroll', updateCaret); 
+    window.addEventListener('resize', updateCaret);
+
+    // Focus behavior
+    function focusInput(){ input.focus(); }
+    document.addEventListener('click', focusInput);
+    window.addEventListener('load', ()=>{
+      println('Type <b>help</b> to see commands.');
+      focusInput();
+      updateCaret(); 
+    });
+  })();
+  </script>
+</body>
+</html>
